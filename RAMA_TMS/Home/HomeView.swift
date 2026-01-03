@@ -114,6 +114,7 @@ struct HomeView: View {
                                 )
                                 .opacity(0.6)
                             }
+                            
                             .padding(.horizontal)
                         }
                         

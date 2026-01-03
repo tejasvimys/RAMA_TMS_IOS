@@ -8,17 +8,22 @@
 import SwiftUI
 
 struct ContentView: View {
+    @EnvironmentObject var auth: AuthViewModel
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        Group {
+            if auth.isAuthenticated {
+                // User is authenticated - show HomeView
+                HomeView()
+            } else {
+                // User is not authenticated - show LoginView
+                LoginView()
+            }
         }
-        .padding()
     }
 }
 
 #Preview {
     ContentView()
+        .environmentObject(AuthViewModel())
 }
