@@ -396,50 +396,55 @@ struct AddDonationView: View {
         }
 
         // MARK: - Functions
-        
-        func submit() {
-            guard let amt = Double(amount), amt > 0 else {
-                withAnimation {
-                    statusMessage = "Please enter a valid amount."
-                    isSuccess = false
-                }
-                return
+    func submit() {
+        guard let amt = Double(amount), amt > 0 else {
+            withAnimation {
+                statusMessage = "Please enter a valid amount."
+                isSuccess = false
             }
-
-            let donorDto = QuickDonorDto(
-                firstName: firstName.trimmingCharacters(in: .whitespaces),
-                lastName: lastName.trimmingCharacters(in: .whitespaces),
-                phone: phone.isEmpty ? nil : phone,
-                email: email.isEmpty ? nil : email,
-                address1: address1.isEmpty ? nil : address1,
-                address2: address2.isEmpty ? nil : address2,
-                city: city.isEmpty ? nil : city,
-                state: stateText.isEmpty ? nil : stateText,
-                country: country.isEmpty ? nil : country,
-                postalCode: postalCode.isEmpty ? nil : postalCode,
-                isOrganization: isOrganization,
-                organizationName: organizationName.isEmpty ? nil : organizationName,
-                donorType: isOrganization ? "Organization" : "Individual"
-            )
-
-            let donationDto = QuickDonationDto(
-                donationAmt: amt,
-                donationType: donationType,
-                dateOfDonation: Date(),
-                paymentMode: paymentMode,
-                referenceNo: referenceNo.isEmpty ? nil : referenceNo,
-                notes: notes.isEmpty ? nil : notes
-            )
-
-            let payload = QuickDonorAndDonationRequest(donor: donorDto, donation: donationDto)
-
-            isSubmitting = true
-            statusMessage = nil
-            isSuccess = false
-
-            Task {
-                do {
-                    let _ = try await QuickDonationApi.shared.submitQuickDonation(payload)
+            return
+        }
+        
+        isSubmitting = true
+        statusMessage = nil
+        isSuccess = false
+        
+        Task {
+            do {
+                // Check if online
+                let isOnline = offlineManager.isOnline
+                
+                if isOnline {
+                    // ONLINE: Submit directly to API
+                    let donorDto = QuickDonorDto(
+                        firstName: firstName.trimmingCharacters(in: .whitespaces),
+                        lastName: lastName.trimmingCharacters(in: .whitespaces),
+                        phone: phone.isEmpty ? nil : phone,
+                        email: email.isEmpty ? nil : email,
+                        address1: address1.isEmpty ? nil : address1,
+                        address2: address2.isEmpty ? nil : address2,
+                        city: city.isEmpty ? nil : city,
+                        state: stateText.isEmpty ? nil : stateText,
+                        country: country.isEmpty ? nil : country,
+                        postalCode: postalCode.isEmpty ? nil : postalCode,
+                        isOrganization: isOrganization,
+                        organizationName: organizationName.isEmpty ? nil : organizationName,
+                        donorType: isOrganization ? "Organization" : "Individual"
+                    )
+                    
+                    let donationDto = QuickDonationDto(
+                        donationAmt: amt,
+                        donationType: donationType,
+                        dateOfDonation: Date(),
+                        paymentMode: paymentMode,
+                        referenceNo: referenceNo.isEmpty ? nil : referenceNo,
+                        notes: notes.isEmpty ? nil : notes
+                    )
+                    
+                    let payload = QuickDonorAndDonationRequest(donor: donorDto, donation: donationDto)
+                    
+                    _ = try await QuickDonationApi.shared.submitQuickDonation(payload)
+                    
                     await MainActor.run {
                         withAnimation {
                             statusMessage = "Donation saved and receipt sent!"
@@ -454,17 +459,133 @@ struct AddDonationView: View {
                             }
                         }
                     }
-                } catch {
+                    
+                } else {
+                    // OFFLINE: Save locally for later sync
+                    let donorName = isOrganization
+                        ? organizationName.trimmingCharacters(in: .whitespaces)
+                        : "\(firstName) \(lastName)".trimmingCharacters(in: .whitespaces)
+                    
+                    let userEmail = auth.email.isEmpty ? (UserDefaults.standard.string(forKey: "userEmail") ?? "unknown") : auth.email
+
+                    
+                    _ = try offlineDonationManager.saveDonation(
+                        donorName: donorName,
+                        donorEmail: email.isEmpty ? nil : email,
+                        donorPhone: phone.isEmpty ? nil : phone,
+                        amount: amt,
+                        donationType: donationType,
+                        paymentMethod: paymentMode,
+                        notes: notes.isEmpty ? nil : notes,
+                        collectorEmail: userEmail
+                    )
+                    
                     await MainActor.run {
                         withAnimation {
-                            statusMessage = "Failed: \(error.localizedDescription)"
-                            isSuccess = false
+                            statusMessage = "Donation saved offline. Will sync when online."
+                            isSuccess = true
                         }
                         isSubmitting = false
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            clearForm()
+                            withAnimation {
+                                statusMessage = nil
+                            }
+                        }
                     }
+                }
+            } catch {
+                await MainActor.run {
+                    withAnimation {
+                        statusMessage = "Failed: \(error.localizedDescription)"
+                        isSuccess = false
+                    }
+                    isSubmitting = false
                 }
             }
         }
+    }
+
+    
+
+    // Helper function to generate receipt number (ADD THIS NEW FUNCTION)
+    private func generateReceiptNumber() -> String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyyMMddHHmmss"
+        let timestamp = dateFormatter.string(from: Date())
+        let random = Int.random(in: 1000...9999)
+        return "RAMA\(timestamp)\(random)"
+    }
+        
+//        func submit() {
+//            guard let amt = Double(amount), amt > 0 else {
+//                withAnimation {
+//                    statusMessage = "Please enter a valid amount."
+//                    isSuccess = false
+//                }
+//                return
+//            }
+//
+//            let donorDto = QuickDonorDto(
+//                firstName: firstName.trimmingCharacters(in: .whitespaces),
+//                lastName: lastName.trimmingCharacters(in: .whitespaces),
+//                phone: phone.isEmpty ? nil : phone,
+//                email: email.isEmpty ? nil : email,
+//                address1: address1.isEmpty ? nil : address1,
+//                address2: address2.isEmpty ? nil : address2,
+//                city: city.isEmpty ? nil : city,
+//                state: stateText.isEmpty ? nil : stateText,
+//                country: country.isEmpty ? nil : country,
+//                postalCode: postalCode.isEmpty ? nil : postalCode,
+//                isOrganization: isOrganization,
+//                organizationName: organizationName.isEmpty ? nil : organizationName,
+//                donorType: isOrganization ? "Organization" : "Individual"
+//            )
+//
+//            let donationDto = QuickDonationDto(
+//                donationAmt: amt,
+//                donationType: donationType,
+//                dateOfDonation: Date(),
+//                paymentMode: paymentMode,
+//                referenceNo: referenceNo.isEmpty ? nil : referenceNo,
+//                notes: notes.isEmpty ? nil : notes
+//            )
+//
+//            let payload = QuickDonorAndDonationRequest(donor: donorDto, donation: donationDto)
+//
+//            isSubmitting = true
+//            statusMessage = nil
+//            isSuccess = false
+//
+//            Task {
+//                do {
+//                    let _ = try await QuickDonationApi.shared.submitQuickDonation(payload)
+//                    await MainActor.run {
+//                        withAnimation {
+//                            statusMessage = "Donation saved and receipt sent!"
+//                            isSuccess = true
+//                        }
+//                        isSubmitting = false
+//                        
+//                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+//                            clearForm()
+//                            withAnimation {
+//                                statusMessage = nil
+//                            }
+//                        }
+//                    }
+//                } catch {
+//                    await MainActor.run {
+//                        withAnimation {
+//                            statusMessage = "Failed: \(error.localizedDescription)"
+//                            isSuccess = false
+//                        }
+//                        isSubmitting = false
+//                    }
+//                }
+//            }
+//        }
         
         func clearForm() {
             firstName = ""

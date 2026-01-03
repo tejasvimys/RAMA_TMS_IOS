@@ -9,7 +9,7 @@
 import Foundation
 import CryptoKit
 
-class OfflineAuthManager {
+class OfflineAuthManager: ObservableObject {
     static let shared = OfflineAuthManager()
     
     private init() {}
