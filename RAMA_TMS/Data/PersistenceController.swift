@@ -53,11 +53,8 @@ class PersistenceController {
         // Create OfflineDonation Entity
         let donationEntity = createDonationEntity()
         
-        // Create EmailQueue Entity
-        let emailEntity = createEmailQueueEntity()
-        
         // Add entities to model
-        model.entities = [donationEntity, emailEntity]
+        model.entities = [donationEntity]
         
         return model
     }
@@ -118,9 +115,6 @@ class PersistenceController {
         
         // errorMessage - String (Optional)
         properties.append(createAttribute(name: "errorMessage", type: .stringAttributeType, isOptional: true))
-        
-        // needsEmailReceipt - Boolean
-        properties.append(createAttribute(name: "needsEmailReceipt", type: .booleanAttributeType, isOptional: false, defaultValue: false))
         
         entity.properties = properties
         return entity
@@ -215,13 +209,8 @@ class PersistenceController {
         let donationFetchRequest: NSFetchRequest<NSFetchRequestResult> = NSFetchRequest(entityName: "OfflineDonation")
         let deleteDonationRequest = NSBatchDeleteRequest(fetchRequest: donationFetchRequest)
         
-        // Delete all EmailQueue
-        let emailFetchRequest: NSFetchRequest<NSFetchRequestResult> = NSFetchRequest(entityName: "EmailQueue")
-        let deleteEmailRequest = NSBatchDeleteRequest(fetchRequest: emailFetchRequest)
-        
         do {
             try context.execute(deleteDonationRequest)
-            try context.execute(deleteEmailRequest)
             try context.save()
             print("✅ All offline data cleared")
         } catch {
@@ -231,7 +220,7 @@ class PersistenceController {
     
     // MARK: - Get Statistics
     
-    func getStats() -> (donations: Int, pendingSync: Int, pendingEmails: Int) {
+    func getStats() -> (donations: Int, pendingSync: Int) {
         let context = container.viewContext
         
         // Total donations
@@ -242,12 +231,7 @@ class PersistenceController {
         donationFetchRequest.predicate = NSPredicate(format: "syncStatus == %@ OR syncStatus == %@", "pending", "failed")
         let pendingSync = (try? context.count(for: donationFetchRequest)) ?? 0
         
-        // Pending emails
-        let emailFetchRequest: NSFetchRequest<EmailQueue> = EmailQueue.fetchRequest()
-        emailFetchRequest.predicate = NSPredicate(format: "status == %@ OR status == %@", "pending", "failed")
-        let pendingEmails = (try? context.count(for: emailFetchRequest)) ?? 0
-        
-        return (totalDonations, pendingSync, pendingEmails)
+        return (totalDonations, pendingSync)
     }
 }
 
@@ -272,7 +256,6 @@ extension PersistenceController {
             donation.collectorEmail = "collector@temple.com"
             donation.syncStatus = i % 2 == 0 ? "pending" : "synced"
             donation.syncAttempts = 0
-            donation.needsEmailReceipt = i % 3 == 0
         }
         
         do {

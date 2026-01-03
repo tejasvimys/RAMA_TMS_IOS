@@ -29,8 +29,6 @@ public class OfflineDonation: NSManagedObject {
     @NSManaged public var lastSyncAttempt: Date?
     @NSManaged public var serverDonationId: Int64
     @NSManaged public var errorMessage: String?
-    
-    // REMOVED: needsEmailReceipt - backend handles this automatically
 }
 
 extension OfflineDonation {
