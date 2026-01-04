@@ -3,7 +3,7 @@
 //  RAMA_TMS
 //
 //  Created by Tejasvi Mahesh on 12/21/25.
-//  Updated with Consolidated Offline Support
+//  Updated: 1/3/26 - Complete offline support with full field mapping
 //
 
 import SwiftUI
@@ -435,7 +435,7 @@ struct AddDonationView: View {
         return hasName && hasAmount && hasReferenceIfNeeded
     }
 
-    // MARK: - Submit Function with Offline Support
+    // MARK: - Submit Function with Complete Offline Support
     func submit() {
         guard let amt = Double(amount), amt > 0 else {
             withAnimation {
@@ -530,9 +530,8 @@ struct AddDonationView: View {
             }
         }
     }
-
     
-    // MARK: - Offline Submission using Consolidated OfflineManager
+    // MARK: - Offline Submission using Consolidated OfflineManager (COMPLETE FIELD MAPPING)
     private func saveOffline(amount: Double) {
         let donorName = isOrganization
             ? organizationName.trimmingCharacters(in: .whitespaces)
@@ -540,7 +539,7 @@ struct AddDonationView: View {
         
         let userEmail = auth.email.isEmpty ? (UserDefaults.standard.string(forKey: "userEmail") ?? "unknown") : auth.email
         
-        // Use consolidated OfflineManager's saveDonationOffline method
+        // Use consolidated OfflineManager's saveDonationOffline method with ALL fields
         let donation = offlineManager.saveDonationOffline(
             donorName: donorName,
             donorEmail: email.isEmpty ? nil : email,
@@ -548,8 +547,19 @@ struct AddDonationView: View {
             amount: Decimal(amount),
             donationType: donationType,
             paymentMethod: paymentMode,
+            paymentReference: referenceNo.isEmpty ? nil : referenceNo,  // ✅ FIXED: Payment reference
             notes: notes.isEmpty ? nil : notes,
             collectorEmail: userEmail,
+            // ✅ NEW: Address fields
+            address1: address1.isEmpty ? nil : address1,
+            address2: address2.isEmpty ? nil : address2,
+            city: city.isEmpty ? nil : city,
+            state: stateText.isEmpty ? nil : stateText,
+            country: country.isEmpty ? nil : country,
+            postalCode: postalCode.isEmpty ? nil : postalCode,
+            // ✅ NEW: Organization fields
+            isOrganization: isOrganization,
+            organizationName: organizationName.isEmpty ? nil : organizationName,
             shouldSendEmail: !email.isEmpty
         )
         
