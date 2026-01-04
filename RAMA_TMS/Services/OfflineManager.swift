@@ -1,9 +1,10 @@
 //
-//  OfflineManager.swift
-//  RAMA_TMS
+// OfflineManager.swift
+// RAMA_TMS
 //
-//  Created by Tejasvi Mahesh on 1/2/26.
-//  Offline Sync & Network Manager - PART 1
+// Created by Tejasvi Mahesh on 1/2/26.
+// Consolidated Offline Sync & Network Manager
+//
 
 import Foundation
 import CoreData
@@ -52,19 +53,27 @@ class OfflineManager: ObservableObject {
     func startNetworkMonitoring() {
         monitor.pathUpdateHandler = { [weak self] path in
             DispatchQueue.main.async {
-                let wasOffline = !(self?.isOnline ?? true)
+                guard let self = self else { return }
+                
+                let wasOffline = !self.isOnline
                 let newStatus = path.status == .satisfied
                 
                 // Only update if status actually changed
-                if self?.isOnline != newStatus {
-                    self?.isOnline = newStatus
+                if self.isOnline != newStatus {
+                    self.isOnline = newStatus
                     
-                    print(newStatus ? "📶 Network: Online" : "📵 Network: Offline")
+                    print(newStatus ? "📶 Network: ONLINE" : "📵 Network: OFFLINE")
+                    
+                    // 🔥 POST NOTIFICATION
+                    NotificationCenter.default.post(
+                        name: .networkStatusChanged,
+                        object: newStatus
+                    )
                     
                     // If we just came back online, trigger sync
                     if wasOffline && newStatus {
-                        print("🔄 Network restored - triggering sync")
-                        self?.syncAllPendingData()
+                        print("🔄 Network restored - triggering auto-sync")
+                        self.syncAllPendingData()
                     }
                 }
             }
@@ -124,9 +133,6 @@ class OfflineManager: ObservableObject {
         
         return donation
     }
-    
-    
-    
     // MARK: - Sync All Pending Data
     
     func syncAllPendingData() {
@@ -185,18 +191,24 @@ class OfflineManager: ObservableObject {
         }
         
         do {
-            // TODO: Replace with actual API call
-            // Example: let serverDonation = try await DonationsAPI.shared.createDonation(...)
+            // Convert offline donation to API request format
+            let request = convertToOnlineRequest(donation)
             
-            try await Task.sleep(nanoseconds: 500_000_000) // Simulate API call
-            let serverDonationId = Int64.random(in: 1000...9999)
+            // ✅ REAL API CALL - Backend will send email automatically
+            let data = try await QuickDonationApi.shared.submitQuickDonation(request)
+            
+            // Parse response to get server IDs
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let response = try decoder.decode(QuickDonationResponse.self, from: data)
             
             await MainActor.run {
                 donation.syncStatus = "synced"
-                donation.serverDonationId = serverDonationId
+                donation.serverDonationId = response.donorReceiptDetailId
                 donation.errorMessage = nil
                 PersistenceController.shared.save()
-                print("✅ Synced: \(donation.receiptNumber) → Server ID: \(serverDonationId)")
+                print("✅ Synced: \(donation.receiptNumber) → Server ID: \(response.donorReceiptDetailId)")
+                print("📧 Backend automatically sent email receipt")
             }
             
         } catch {
@@ -214,185 +226,220 @@ class OfflineManager: ObservableObject {
         }
     }
     
+    // MARK: - Convert Offline Donation to API Request
+    
+    private func convertToOnlineRequest(_ offline: OfflineDonation) -> QuickDonorAndDonationRequest {
+        // Split name into first/last (basic split)
+        let nameParts = offline.donorName.components(separatedBy: " ")
+        let firstName = nameParts.first ?? offline.donorName
+        let lastName = nameParts.dropFirst().joined(separator: " ")
+        
+        let donor = QuickDonorDto(
+            firstName: firstName,
+            lastName: lastName.isEmpty ? firstName : lastName,
+            phone: offline.donorPhone,
+            email: offline.donorEmail,
+            address1: nil,
+            address2: nil,
+            city: nil,
+            state: nil,
+            country: nil,
+            postalCode: nil,
+            isOrganization: false,
+            organizationName: nil,
+            donorType: "Individual"
+        )
+        
+        let donation = QuickDonationDto(
+            donationAmt: offline.amount.doubleValue,
+            donationType: offline.donationType,
+            dateOfDonation: offline.createdAt,
+            paymentMode: offline.paymentMethod,
+            referenceNo: offline.receiptNumber,
+            notes: offline.notes
+        )
+        
+        return QuickDonorAndDonationRequest(donor: donor, donation: donation)
+    }
+    
     // MARK: - Manual Retry Methods
+    
+    func retryFailedDonation(_ donation: OfflineDonation) {
+        donation.syncStatus = "pending"
+        donation.errorMessage = nil
+        PersistenceController.shared.save()
+        updatePendingCounts()
         
-        func retryFailedDonation(_ donation: OfflineDonation) {
-            donation.syncStatus = "pending"
-            donation.errorMessage = nil
-            PersistenceController.shared.save()
-            updatePendingCounts()
-            
-            if isOnline {
-                syncAllPendingData()
-            }
-            
-            print("🔄 Retrying donation: \(donation.receiptNumber)")
+        if isOnline {
+            syncAllPendingData()
         }
         
-        // MARK: - Fetch Methods
+        print("🔄 Retrying donation: \(donation.receiptNumber)")
+    }
+    // MARK: - Fetch Methods
+    
+    func getAllDonations() -> [OfflineDonation] {
+        let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
         
-        func getAllDonations() -> [OfflineDonation] {
-            let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
-            fetchRequest.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
-            
-            return (try? context.fetch(fetchRequest)) ?? []
-        }
+        return (try? context.fetch(fetchRequest)) ?? []
+    }
+    
+    func getPendingDonations() -> [OfflineDonation] {
+        let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "syncStatus != %@", "synced")
+        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
         
-        func getPendingDonations() -> [OfflineDonation] {
-            let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
-            fetchRequest.predicate = NSPredicate(format: "syncStatus != %@", "synced")
-            fetchRequest.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
-            
-            return (try? context.fetch(fetchRequest)) ?? []
-        }
+        return (try? context.fetch(fetchRequest)) ?? []
+    }
+    
+    func getSyncedDonations() -> [OfflineDonation] {
+        let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "syncStatus == %@", "synced")
+        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
         
-        func getSyncedDonations() -> [OfflineDonation] {
-            let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
-            fetchRequest.predicate = NSPredicate(format: "syncStatus == %@", "synced")
-            fetchRequest.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
-            
-            return (try? context.fetch(fetchRequest)) ?? []
-        }
+        return (try? context.fetch(fetchRequest)) ?? []
+    }
+    
+    func getFailedDonations() -> [OfflineDonation] {
+        let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "syncStatus == %@ OR syncStatus == %@", "failed", "failed_permanent")
+        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
         
-        func getFailedDonations() -> [OfflineDonation] {
-            let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
-            fetchRequest.predicate = NSPredicate(format: "syncStatus == %@ OR syncStatus == %@", "failed", "failed_permanent")
-            fetchRequest.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
-            
-            return (try? context.fetch(fetchRequest)) ?? []
-        }
+        return (try? context.fetch(fetchRequest)) ?? []
+    }
+    
+    func getDonation(byReceiptNumber receiptNumber: String) -> OfflineDonation? {
+        let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "receiptNumber == %@", receiptNumber)
+        fetchRequest.fetchLimit = 1
         
+        return try? context.fetch(fetchRequest).first
+    }
+    
+    // MARK: - Delete Methods
+    
+    func deleteDonation(_ donation: OfflineDonation) {
+        print("🗑️ Deleting donation: \(donation.receiptNumber)")
+        context.delete(donation)
+        PersistenceController.shared.save()
+        updatePendingCounts()
+    }
+    
+    func deleteAllSyncedDonations() {
+        let donations = getSyncedDonations()
+        donations.forEach { context.delete($0) }
+        PersistenceController.shared.save()
+        updatePendingCounts()
+        print("🗑️ Deleted \(donations.count) synced donation(s)")
+    }
+    
+    // MARK: - Statistics
+    
+    func getStatistics() -> (total: Int, synced: Int, pending: Int, failed: Int) {
+        let all = getAllDonations()
+        let synced = all.filter { $0.syncStatus == "synced" }.count
+        let pending = all.filter { $0.syncStatus == "pending" }.count
+        let failed = all.filter { $0.syncStatus == "failed" || $0.syncStatus == "failed_permanent" }.count
         
-        func getDonation(byReceiptNumber receiptNumber: String) -> OfflineDonation? {
-            let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
-            fetchRequest.predicate = NSPredicate(format: "receiptNumber == %@", receiptNumber)
-            fetchRequest.fetchLimit = 1
-            
-            return try? context.fetch(fetchRequest).first
-        }
-        
-        // MARK: - Delete Methods
-        
-        func deleteDonation(_ donation: OfflineDonation) {
-            print("🗑️ Deleting donation: \(donation.receiptNumber)")
-            context.delete(donation)
-            PersistenceController.shared.save()
-            updatePendingCounts()
-        }
-        
-        func deleteAllSyncedDonations() {
-            let donations = getSyncedDonations()
-            donations.forEach { context.delete($0) }
-            PersistenceController.shared.save()
-            updatePendingCounts()
-            print("🗑️ Deleted \(donations.count) synced donation(s)")
-        }
-        
-        // MARK: - Statistics
-        
-        func getStatistics() -> (total: Int, synced: Int, pending: Int, failed: Int) {
-            let all = getAllDonations()
-            let synced = all.filter { $0.syncStatus == "synced" }.count
-            let pending = all.filter { $0.syncStatus == "pending" }.count
-            let failed = all.filter { $0.syncStatus == "failed" || $0.syncStatus == "failed_permanent" }.count
-            
-            return (all.count, synced, pending, failed)
-        }
-        
-        func getTotalOfflineAmount() -> Decimal {
-            let donations = getAllDonations()
-            return donations.reduce(Decimal(0)) { $0 + ($1.amount as Decimal) }
-        }
-        
-        func getPendingAmount() -> Decimal {
-            let donations = getPendingDonations()
-            return donations.reduce(Decimal(0)) { $0 + ($1.amount as Decimal) }
-        }
-        
-        // MARK: - Helper Methods
-        
-        func updatePendingCounts() {
-            let donationFetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
-            donationFetchRequest.predicate = NSPredicate(format: "syncStatus == %@ OR syncStatus == %@", "pending", "failed")
-            pendingSyncCount = (try? context.count(for: donationFetchRequest)) ?? 0
-        }
-        
-        private func generateReceiptNumber() -> String {
-            let timestamp = Int(Date().timeIntervalSince1970)
-            let random = Int.random(in: 1000...9999)
-            return "OFF-\(timestamp)-\(random)"
-        }
-        
-        private func formatDate(_ date: Date) -> String {
-            let formatter = DateFormatter()
-            formatter.dateStyle = .medium
-            formatter.timeStyle = .short
-            return formatter.string(from: date)
-        }
-        
-        func formatAmount(_ amount: NSDecimalNumber) -> String {
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .currency
-            formatter.currencyCode = "USD"
-            return formatter.string(from: amount) ?? "$0.00"
-        }
-        
-        // MARK: - Force Sync (Manual)
-        
-        func forceSyncNow() {
-            if isOnline {
-                syncAllPendingData()
-            } else {
-                print("⚠️ Cannot force sync - device is offline")
-            }
-        }
-        
-        // MARK: - Clear Old Synced Data
-        
-        func clearOldSyncedData(olderThanDays days: Int = 30) {
-            let cutoffDate = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
-            
-            let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
-            fetchRequest.predicate = NSPredicate(
-                format: "syncStatus == %@ AND createdAt < %@",
-                "synced",
-                cutoffDate as NSDate
-            )
-            
-            guard let oldDonations = try? context.fetch(fetchRequest) else { return }
-            
-            oldDonations.forEach { context.delete($0) }
-            PersistenceController.shared.save()
-            
-            print("🗑️ Cleared \(oldDonations.count) old synced donation(s)")
+        return (all.count, synced, pending, failed)
+    }
+    
+    func getTotalOfflineAmount() -> Decimal {
+        let donations = getAllDonations()
+        return donations.reduce(Decimal(0)) { $0 + ($1.amount as Decimal) }
+    }
+    
+    func getPendingAmount() -> Decimal {
+        let donations = getPendingDonations()
+        return donations.reduce(Decimal(0)) { $0 + ($1.amount as Decimal) }
+    }
+    
+    // MARK: - Helper Methods
+    
+    func updatePendingCounts() {
+        let donationFetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
+        donationFetchRequest.predicate = NSPredicate(format: "syncStatus == %@ OR syncStatus == %@", "pending", "failed")
+        pendingSyncCount = (try? context.count(for: donationFetchRequest)) ?? 0
+    }
+    
+    private func generateReceiptNumber() -> String {
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let random = Int.random(in: 1000...9999)
+        return "OFF-\(timestamp)-\(random)"
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+    
+    func formatAmount(_ amount: NSDecimalNumber) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "USD"
+        return formatter.string(from: amount) ?? "$0.00"
+    }
+    
+    // MARK: - Force Sync (Manual)
+    
+    func forceSyncNow() {
+        if isOnline {
+            syncAllPendingData()
+        } else {
+            print("⚠️ Cannot force sync - device is offline")
         }
     }
-
-    // MARK: - Extensions for Status Display
-
-    extension OfflineDonation {
-        var syncStatusDisplay: String {
-            switch syncStatus {
-            case "pending": return "Pending Sync"
-            case "syncing": return "Syncing..."
-            case "synced": return "Synced"
-            case "failed": return "Failed"
-            case "failed_permanent": return "Failed (Permanent)"    
-            default: return syncStatus
-            }
-        }
+    
+    // MARK: - Clear Old Synced Data
+    
+    func clearOldSyncedData(olderThanDays days: Int = 30) {
+        let cutoffDate = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
         
-        var syncStatusColor: String {
-            switch syncStatus {
-            case "synced": return "green"
-            case "pending": return "orange"
-            case "syncing": return "blue"
-            case "failed", "failed_permanent": return "red"
-            default: return "gray"
-            }
-        }
+        let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
+        fetchRequest.predicate = NSPredicate(
+            format: "syncStatus == %@ AND createdAt < %@",
+            "synced",
+            cutoffDate as NSDate
+        )
         
-        var formattedAmount: String {
-            OfflineManager.shared.formatAmount(amount)
+        guard let oldDonations = try? context.fetch(fetchRequest) else { return }
+        
+        oldDonations.forEach { context.delete($0) }
+        PersistenceController.shared.save()
+        
+        print("🗑️ Cleared \(oldDonations.count) old synced donation(s)")
+    }
+}
+
+// MARK: - Extensions for Status Display
+
+extension OfflineDonation {
+    var syncStatusDisplay: String {
+        switch syncStatus {
+        case "pending": return "Pending Sync"
+        case "syncing": return "Syncing..."
+        case "synced": return "Synced"
+        case "failed": return "Failed"
+        case "failed_permanent": return "Failed (Permanent)"
+        default: return syncStatus
         }
     }
+    
+    var syncStatusColor: String {
+        switch syncStatus {
+        case "synced": return "green"
+        case "pending": return "orange"
+        case "syncing": return "blue"
+        case "failed", "failed_permanent": return "red"
+        default: return "gray"
+        }
+    }
+    
+    var formattedAmount: String {
+        OfflineManager.shared.formatAmount(amount)
+    }
+}
+
