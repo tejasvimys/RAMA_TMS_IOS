@@ -1,17 +1,19 @@
 //
-//  LoginView.swift
-//  RAMA_TMS
+// LoginView.swift
+// RAMA_TMS
 //
-//  Created by Tejasvi Mahesh on 12/22/25.
-//  Updated with Offline Authentication Support
+// Created by Tejasvi Mahesh on 12/22/25.
+// Updated with Real-time Offline Authentication Support - PART 1
 //
 
 import SwiftUI
 
 struct LoginView: View {
     @EnvironmentObject var auth: AuthViewModel
-    @StateObject private var offlineManager = OfflineManager.shared
-    @StateObject private var offlineAuthManager = OfflineAuthManager.shared
+    
+    // Direct references to shared instances
+    private let offlineManager = OfflineManager.shared
+    private let offlineAuthManager = OfflineAuthManager.shared
     
     @State private var email = ""
     @State private var password = ""
@@ -19,6 +21,10 @@ struct LoginView: View {
     @State private var isRegister = false
     @State private var loading = false
     @State private var statusMessage: String?
+    
+    // Network state tracking (local state that updates from notifications)
+    @State private var isOnline = true
+    @State private var isOfflineLoginAvailable = false
     
     // 2FA state
     @State private var requires2FA = false
@@ -58,38 +64,11 @@ struct LoginView: View {
                         .fontWeight(.bold)
                         .foregroundColor(RamaTheme.primary)
                     
-                    // Offline Mode Indicator
-                    if !offlineManager.isOnline {
-                        HStack(spacing: 8) {
-                            Image(systemName: "wifi.slash")
-                            Text("Offline Mode")
-                            if auth.isOfflineLoginAvailable() {
-                                Text("• Cached login available")
-                                    .font(.caption)
-                            }
-                        }
-                        .font(.caption)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Color.orange)
-                        .cornerRadius(20)
-                    }
+                    // Network Status Indicator
+                    networkStatusBadge
                     
                     // Sync Status
-                    if offlineManager.pendingSyncCount > 0 || offlineManager.pendingEmailCount > 0 {
-                        VStack(spacing: 4) {
-                            if offlineManager.pendingSyncCount > 0 {
-                                Text("\(offlineManager.pendingSyncCount) donation(s) pending sync")
-                                    .font(.caption2)
-                            }
-                            if offlineManager.pendingEmailCount > 0 {
-                                Text("\(offlineManager.pendingEmailCount) email(s) pending")
-                                    .font(.caption2)
-                            }
-                        }
-                        .foregroundColor(.blue)
-                    }
+                    syncStatusView
                     
                     // Main Content
                     if requires2FASetup {
@@ -104,7 +83,7 @@ struct LoginView: View {
                     if let status = statusMessage {
                         Text(status)
                             .font(.caption)
-                            .foregroundColor(status.contains("success") ? .green : .red)
+                            .foregroundColor(statusMessageColor)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 32)
                     }
@@ -116,10 +95,139 @@ struct LoginView: View {
             ForgotPasswordView()
         }
         .onAppear {
-            // Pre-fill email if cached credentials exist
-            if let cached = OfflineAuthManager.shared.getCachedEmail() {
-                email = cached
-                cachedUserEmail = cached
+            setupView()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .networkStatusChanged)) { notification in
+            if let newStatus = notification.object as? Bool {
+                handleNetworkStatusChange(isOnline: newStatus)
+            }
+        }
+    }
+    
+    // MARK: - Network Status Badge
+    
+    @ViewBuilder
+    private var networkStatusBadge: some View {
+        if !isOnline {
+            HStack(spacing: 8) {
+                Image(systemName: "wifi.slash")
+                Text("Offline Mode")
+                if isOfflineLoginAvailable {
+                    Text("• Cached login available")
+                        .font(.caption)
+                }
+            }
+            .font(.caption)
+            .foregroundColor(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color.orange)
+            .cornerRadius(20)
+            .transition(.scale.combined(with: .opacity))
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: "wifi")
+                Text("Online")
+            }
+            .font(.caption)
+            .foregroundColor(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color.green)
+            .cornerRadius(20)
+            .transition(.scale.combined(with: .opacity))
+        }
+    }
+    
+    // MARK: - Sync Status View
+    
+    @ViewBuilder
+    private var syncStatusView: some View {
+        let pendingSyncCount = offlineManager.pendingSyncCount
+        let pendingEmailCount = offlineManager.pendingEmailCount
+        
+        if pendingSyncCount > 0 || pendingEmailCount > 0 {
+            VStack(spacing: 4) {
+                if pendingSyncCount > 0 {
+                    Text("\(pendingSyncCount) donation(s) pending sync")
+                        .font(.caption2)
+                }
+                if pendingEmailCount > 0 {
+                    Text("\(pendingEmailCount) email(s) pending")
+                        .font(.caption2)
+                }
+            }
+            .foregroundColor(.blue)
+        }
+    }
+    
+    private var statusMessageColor: Color {
+        guard let message = statusMessage else { return .red }
+        if message.contains("success") || message.contains("online") || message.contains("restored") {
+            return .green
+        }
+        return .red
+    }
+    
+    // MARK: - Setup
+    
+    func setupView() {
+        // Initialize state from managers
+        isOnline = offlineManager.isOnline
+        isOfflineLoginAvailable = offlineAuthManager.isOfflineLoginAvailable()
+        
+        // Pre-fill email if cached credentials exist
+        if let cached = offlineAuthManager.getCachedEmail() {
+            email = cached
+            cachedUserEmail = cached
+        }
+        
+        print("📱 LoginView initialized")
+        print("   Online: \(isOnline)")
+        print("   Offline login available: \(isOfflineLoginAvailable)")
+    }
+    
+    // MARK: - Network Status Change Handler
+    
+    func handleNetworkStatusChange(isOnline newStatus: Bool) {
+        let wasOnline = isOnline
+        
+        // Update state with animation
+        withAnimation(.easeInOut(duration: 0.3)) {
+            isOnline = newStatus
+        }
+        
+        print("🔄 Network status changed in LoginView: \(wasOnline ? "Online" : "Offline") → \(newStatus ? "Online" : "Offline")")
+        
+        // Transition from offline to online
+        if !wasOnline && newStatus {
+            statusMessage = "✓ Connection restored - You're back online!"
+            isOfflineAttempt = false
+            
+            // Auto-dismiss after 3 seconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                if statusMessage?.contains("restored") == true {
+                    withAnimation {
+                        statusMessage = nil
+                    }
+                }
+            }
+        }
+        
+        // Transition from online to offline
+        if wasOnline && !newStatus {
+            isOfflineAttempt = false
+            statusMessage = isOfflineLoginAvailable
+                ? "⚠️ Connection lost - Offline mode available"
+                : "⚠️ Connection lost - Please reconnect to login"
+            
+            // Auto-dismiss after 3 seconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                if statusMessage?.contains("Connection lost") == true {
+                    withAnimation {
+                        statusMessage = nil
+                    }
+                }
             }
         }
     }
@@ -159,7 +267,7 @@ struct LoginView: View {
             }
             
             // Offline Login Hint
-            if !offlineManager.isOnline && auth.isOfflineLoginAvailable() {
+            if !isOnline && isOfflineLoginAvailable && !isRegister {
                 Text("You can login with cached credentials")
                     .font(.caption2)
                     .foregroundColor(.orange)
@@ -174,7 +282,7 @@ struct LoginView: View {
                 } else {
                     HStack {
                         Text(isRegister ? "Register" : "Login")
-                        if !offlineManager.isOnline && !isRegister {
+                        if !isOnline && !isRegister {
                             Text("(Offline)")
                                 .font(.caption)
                         }
@@ -199,7 +307,7 @@ struct LoginView: View {
             }
         }
     }
-    // MARK: - 2FA Verification Section (Regular Login)
+    // MARK: - 2FA Verification Section
     
     var twoFactorVerificationSection: some View {
         VStack(spacing: 16) {
@@ -340,7 +448,6 @@ struct LoginView: View {
                     .background(Color.white)
                     .cornerRadius(8)
                 
-                // Show first 4 backup codes
                 VStack {
                     Text("Backup Codes (Save these!)")
                         .font(.caption)
@@ -410,7 +517,6 @@ struct LoginView: View {
     var can2FASubmit: Bool {
         twoFactorCode.count == 6 || twoFactorCode.count == 8
     }
-    
     // MARK: - Handlers
     
     func handleEmailAuth() {
@@ -421,7 +527,7 @@ struct LoginView: View {
             do {
                 if isRegister {
                     // Registration (online only)
-                    if !offlineManager.isOnline {
+                    if !isOnline {
                         await MainActor.run {
                             statusMessage = "Registration requires internet connection"
                             loading = false
@@ -442,7 +548,7 @@ struct LoginView: View {
                     }
                 } else {
                     // Login - try online first, fallback to offline
-                    if offlineManager.isOnline {
+                    if isOnline {
                         try await attemptOnlineLogin()
                     } else {
                         try await attemptOfflineLogin()
@@ -450,7 +556,7 @@ struct LoginView: View {
                 }
             } catch {
                 // If online login fails and we're offline, try offline login
-                if !offlineManager.isOnline {
+                if !isOnline {
                     do {
                         try await attemptOfflineLogin()
                     } catch {
@@ -710,9 +816,9 @@ struct LoginView: View {
     
     func shareBackupCodes() {
         let text = "RAMA TMS Backup Codes\n" +
-                   "Keep these codes safe!\n\n" +
-                   backupCodes.joined(separator: "\n") +
-                   "\n\nThese codes can be used if you lose access to your authenticator app."
+        "Keep these codes safe!\n\n" +
+        backupCodes.joined(separator: "\n") +
+        "\n\nThese codes can be used if you lose access to your authenticator app."
         
         let activityVC = UIActivityViewController(activityItems: [text], applicationActivities: nil)
         

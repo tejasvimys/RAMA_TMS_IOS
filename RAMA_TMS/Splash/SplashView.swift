@@ -1,8 +1,9 @@
 //
-//  SplashView.swift
-//  RAMA_TMS
+// SplashView.swift
+// RAMA_TMS
 //
-//  Created by Tejasvi Mahesh on 12/21/25.
+// Created by Tejasvi Mahesh on 12/21/25.
+// Updated with Offline Mode Support
 //
 
 import SwiftUI
@@ -15,6 +16,8 @@ struct SplashView: View {
     @State private var isRetrying = false
     @State private var scale: CGFloat = 0.5
     @State private var opacity: Double = 0.5
+    @StateObject private var offlineManager = OfflineManager.shared
+    @State private var hasOfflineCredentials = false
     
     var body: some View {
         ZStack {
@@ -66,7 +69,7 @@ struct SplashView: View {
                             .foregroundColor(.secondary)
                     }
                 } else {
-                    // Error State
+                    // Error State with Offline Option
                     VStack(spacing: 16) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 50))
@@ -82,8 +85,24 @@ struct SplashView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 32)
                         
+                        // Offline Mode Availability Notice
+                        if hasOfflineCredentials {
+                            HStack(spacing: 8) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                Text("Offline mode available")
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.green.opacity(0.1))
+                            .cornerRadius(20)
+                        }
+                        
                         // Action Buttons
                         VStack(spacing: 12) {
+                            // Retry Connection Button
                             Button {
                                 retryConnection()
                             } label: {
@@ -106,6 +125,23 @@ struct SplashView: View {
                             .disabled(isRetrying)
                             .padding(.horizontal, 32)
                             
+                            // Continue Offline Button (NEW)
+                            Button {
+                                continueOffline()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "wifi.slash")
+                                    Text("Continue Offline")
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(hasOfflineCredentials ? RamaTheme.primary : Color.gray.opacity(0.3))
+                                .foregroundColor(.white)
+                                .cornerRadius(12)
+                            }
+                            .padding(.horizontal, 32)
+                            
+                            // Check Network Settings Button
                             Button {
                                 if let url = URL(string: UIApplication.openSettingsURLString) {
                                     UIApplication.shared.open(url)
@@ -132,6 +168,17 @@ struct SplashView: View {
                 
                 Spacer()
                 
+                // Network Status Indicator
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(offlineManager.isOnline ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
+                    Text(offlineManager.isOnline ? "Online" : "Offline")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .opacity(opacity)
+                
                 // Version
                 Text("Version 1.0.0")
                     .font(.caption2)
@@ -141,6 +188,7 @@ struct SplashView: View {
             }
         }
         .onAppear {
+            checkOfflineAvailability()
             performHealthCheck()
             animateLogo()
         }
@@ -150,6 +198,13 @@ struct SplashView: View {
         withAnimation(.easeOut(duration: 0.8)) {
             scale = 1.0
             opacity = 1.0
+        }
+    }
+    
+    func checkOfflineAvailability() {
+        hasOfflineCredentials = OfflineAuthManager.shared.isOfflineLoginAvailable()
+        if hasOfflineCredentials {
+            print("✅ Offline login available for: \(OfflineAuthManager.shared.getCachedEmail() ?? "unknown")")
         }
     }
     
@@ -189,7 +244,7 @@ struct SplashView: View {
             
             Please check your internet connection and try again.
             
-            If you're connected to WiFi, make sure you have access to the internet.
+            \(hasOfflineCredentials ? "You can continue working offline with cached credentials." : "")
             """
             
         case .timeout:
@@ -201,7 +256,7 @@ struct SplashView: View {
             • Slow internet connection
             • Server maintenance
             
-            Please check your connection and try again.
+            \(hasOfflineCredentials ? "You can continue working offline." : "Please check your connection and try again.")
             """
         }
     }
@@ -221,6 +276,15 @@ struct SplashView: View {
                 handleHealthStatus(status)
             }
         }
+    }
+    
+    // NEW: Continue Offline Function
+    func continueOffline() {
+        print("🔄 User chose to continue offline")
+        
+        // Proceed to main app even though health check failed
+        // The offline indicator will show throughout the app
+        onHealthCheckPassed()
     }
 }
 

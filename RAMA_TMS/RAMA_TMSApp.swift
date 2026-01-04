@@ -33,7 +33,7 @@ struct RamaApp: App {
             
             // Test: Print stats on launch
             let stats = PersistenceController.shared.getStats()
-            print("📊 Offline Stats - Donations: \(stats.donations), Pending Sync: \(stats.pendingSync), Pending Emails: \(stats.pendingEmails)")
+            print("📊 Offline Stats - Donations: \(stats.donations), Pending Sync: \(stats.pendingSync)")
         
         // Test offline auth availability
         if OfflineAuthManager.shared.isOfflineLoginAvailable() {

@@ -30,6 +30,7 @@ struct TokenExchangeResponse: Codable {
     let role: String?
     let isActive: Bool
     let isNewUser: Bool?
+    let twoFactorSecret: String?
 }
 
 final class AuthAPI {

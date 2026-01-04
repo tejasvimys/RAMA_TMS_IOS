@@ -10,6 +10,10 @@ import CoreData
 import Combine
 import Network
 
+extension Notification.Name {
+    static let networkStatusChanged = Notification.Name("networkStatusChanged")
+}
+
 class OfflineManager: ObservableObject {
     static let shared = OfflineManager()
     
@@ -49,13 +53,19 @@ class OfflineManager: ObservableObject {
         monitor.pathUpdateHandler = { [weak self] path in
             DispatchQueue.main.async {
                 let wasOffline = !(self?.isOnline ?? true)
-                self?.isOnline = path.status == .satisfied
+                let newStatus = path.status == .satisfied
                 
-                print(self?.isOnline == true ? "📶 Online" : "📵 Offline")
-                
-                // If we just came back online, trigger sync
-                if wasOffline && (self?.isOnline ?? false) {
-                    self?.syncAllPendingData()
+                // Only update if status actually changed
+                if self?.isOnline != newStatus {
+                    self?.isOnline = newStatus
+                    
+                    print(newStatus ? "📶 Network: Online" : "📵 Network: Offline")
+                    
+                    // If we just came back online, trigger sync
+                    if wasOffline && newStatus {
+                        print("🔄 Network restored - triggering sync")
+                        self?.syncAllPendingData()
+                    }
                 }
             }
         }
@@ -101,17 +111,11 @@ class OfflineManager: ObservableObject {
         donation.collectorEmail = collectorEmail
         donation.syncStatus = "pending"
         donation.syncAttempts = 0
-        donation.needsEmailReceipt = shouldSendEmail && donorEmail != nil
         
         PersistenceController.shared.save()
         updatePendingCounts()
         
         print("✅ Donation saved offline: \(donation.receiptNumber)")
-        
-        // If email is requested and we have an email, queue it
-        if shouldSendEmail, let email = donorEmail {
-            queueEmailReceipt(donation: donation, recipientEmail: email)
-        }
         
         // Try to sync immediately if online
         if isOnline {
@@ -121,45 +125,7 @@ class OfflineManager: ObservableObject {
         return donation
     }
     
-    // MARK: - Email Queue Management
     
-    func queueEmailReceipt(donation: OfflineDonation, recipientEmail: String) {
-        let emailItem = EmailQueue(context: context)
-        emailItem.id = UUID()
-        emailItem.recipientEmail = recipientEmail
-        emailItem.subject = "Donation Receipt - \(donation.receiptNumber)"
-        emailItem.body = generateEmailBody(donation: donation)
-        emailItem.receiptNumber = donation.receiptNumber
-        emailItem.donationId = donation.id
-        emailItem.createdAt = Date()
-        emailItem.status = "pending"
-        emailItem.sendAttempts = 0
-        
-        PersistenceController.shared.save()
-        updatePendingCounts()
-        
-        print("📧 Email queued for: \(recipientEmail)")
-    }
-    
-    private func generateEmailBody(donation: OfflineDonation) -> String {
-        let dateStr = formatDate(donation.createdAt)
-        return """
-        Dear \(donation.donorName),
-        
-        Thank you for your generous donation to Ananthaadi Rayara Matha (RAMA) Temple.
-        
-        Receipt Details:
-        - Receipt Number: \(donation.receiptNumber)
-        - Amount: $\(donation.amount)
-        - Payment Method: \(donation.paymentMethod)
-        - Date: \(dateStr)
-        
-        Your contribution helps us continue our sacred mission.
-        
-        With gratitude,
-        RAMA Temple Management
-        """
-    }
     
     // MARK: - Sync All Pending Data
     
@@ -174,7 +140,6 @@ class OfflineManager: ObservableObject {
         
         Task {
             await syncDonations()
-            await sendPendingEmails()
             
             await MainActor.run {
                 isSyncing = false
@@ -249,61 +214,6 @@ class OfflineManager: ObservableObject {
         }
     }
     
-    // MARK: - Send Pending Emails
-    
-    private func sendPendingEmails() async {
-        let fetchRequest: NSFetchRequest<EmailQueue> = EmailQueue.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "status == %@ OR status == %@", "pending", "failed")
-        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
-        
-        guard let pendingEmails = try? context.fetch(fetchRequest) else { return }
-        
-        let totalCount = pendingEmails.count
-        guard totalCount > 0 else { return }
-        
-        print("📧 Sending \(totalCount) email(s)...")
-        
-        for (index, email) in pendingEmails.enumerated() {
-            await MainActor.run {
-                currentSyncItem = "Sending email \(index + 1) of \(totalCount)"
-            }
-            
-            await sendEmail(email)
-        }
-    }
-    
-    private func sendEmail(_ emailItem: EmailQueue) async {
-        await MainActor.run {
-            emailItem.status = "sending"
-            emailItem.sendAttempts += 1
-            emailItem.lastAttempt = Date()
-            PersistenceController.shared.save()
-        }
-        
-        do {
-            // TODO: Replace with actual email API call
-            try await Task.sleep(nanoseconds: 300_000_000) // Simulate email sending
-            
-            await MainActor.run {
-                emailItem.status = "sent"
-                emailItem.errorMessage = nil
-                PersistenceController.shared.save()
-                print("✅ Email sent to: \(emailItem.recipientEmail)")
-            }
-            
-        } catch {
-            await MainActor.run {
-                emailItem.status = "failed"
-                emailItem.errorMessage = error.localizedDescription
-                
-                if emailItem.sendAttempts >= 3 {
-                    emailItem.status = "failed_permanent"
-                }
-                
-                PersistenceController.shared.save()
-            }
-        }
-    }
     // MARK: - Manual Retry Methods
         
         func retryFailedDonation(_ donation: OfflineDonation) {
@@ -317,19 +227,6 @@ class OfflineManager: ObservableObject {
             }
             
             print("🔄 Retrying donation: \(donation.receiptNumber)")
-        }
-        
-        func retryFailedEmail(_ emailItem: EmailQueue) {
-            emailItem.status = "pending"
-            emailItem.errorMessage = nil
-            PersistenceController.shared.save()
-            updatePendingCounts()
-            
-            if isOnline {
-                syncAllPendingData()
-            }
-            
-            print("🔄 Retrying email: \(emailItem.recipientEmail)")
         }
         
         // MARK: - Fetch Methods
@@ -365,13 +262,6 @@ class OfflineManager: ObservableObject {
             return (try? context.fetch(fetchRequest)) ?? []
         }
         
-        func getPendingEmails() -> [EmailQueue] {
-            let fetchRequest: NSFetchRequest<EmailQueue> = EmailQueue.fetchRequest()
-            fetchRequest.predicate = NSPredicate(format: "status != %@", "sent")
-            fetchRequest.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
-            
-            return (try? context.fetch(fetchRequest)) ?? []
-        }
         
         func getDonation(byReceiptNumber receiptNumber: String) -> OfflineDonation? {
             let fetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
@@ -386,13 +276,6 @@ class OfflineManager: ObservableObject {
         func deleteDonation(_ donation: OfflineDonation) {
             print("🗑️ Deleting donation: \(donation.receiptNumber)")
             context.delete(donation)
-            PersistenceController.shared.save()
-            updatePendingCounts()
-        }
-        
-        func deleteEmail(_ emailItem: EmailQueue) {
-            print("🗑️ Deleting email: \(emailItem.receiptNumber)")
-            context.delete(emailItem)
             PersistenceController.shared.save()
             updatePendingCounts()
         }
@@ -432,10 +315,6 @@ class OfflineManager: ObservableObject {
             let donationFetchRequest: NSFetchRequest<OfflineDonation> = OfflineDonation.fetchRequest()
             donationFetchRequest.predicate = NSPredicate(format: "syncStatus == %@ OR syncStatus == %@", "pending", "failed")
             pendingSyncCount = (try? context.count(for: donationFetchRequest)) ?? 0
-            
-            let emailFetchRequest: NSFetchRequest<EmailQueue> = EmailQueue.fetchRequest()
-            emailFetchRequest.predicate = NSPredicate(format: "status == %@ OR status == %@", "pending", "failed")
-            pendingEmailCount = (try? context.count(for: emailFetchRequest)) ?? 0
         }
         
         private func generateReceiptNumber() -> String {
@@ -515,18 +394,5 @@ class OfflineManager: ObservableObject {
         
         var formattedAmount: String {
             OfflineManager.shared.formatAmount(amount)
-        }
-    }
-
-    extension EmailQueue {
-        var statusDisplay: String {
-            switch status {
-            case "pending": return "Pending"
-            case "sending": return "Sending..."
-            case "sent": return "Sent"
-            case "failed": return "Failed"
-            case "failed_permanent": return "Failed (Permanent)"
-            default: return status
-            }
         }
     }
