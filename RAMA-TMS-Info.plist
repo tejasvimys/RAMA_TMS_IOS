@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleName</key>
 	<string>RAMA Donations</string>
+	<key>CFBundleDisplayName</key>
+	<string>RAMA Donations</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
