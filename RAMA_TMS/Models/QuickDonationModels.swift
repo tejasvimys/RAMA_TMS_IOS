@@ -65,3 +65,16 @@ struct DaySummaryDto: Codable {
     let totalAmount: Double
     let count: Int
 }
+struct MobileQuickDonationResponse: Codable {
+    var donorId: Int64
+    var donorReceiptDetailId: Int64
+    var donorFullName: String
+    var donationAmt: Double
+    var dateOfDonation: Date
+    var receiptNumber: String
+    var donationType: String
+    var paymentMethod: String
+    var paymentReference: String?
+    var emailSent: Bool
+    var receiptPdfUrl: String
+}

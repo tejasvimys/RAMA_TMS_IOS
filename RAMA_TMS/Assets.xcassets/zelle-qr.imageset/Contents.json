@@ -1,15 +1,17 @@
 {
   "images" : [
     {
-      "filename" : "zelle-qr.png",
+      "filename" : "PHOTO-2025-08-07-20-57-50.jpg",
       "idiom" : "universal",
       "scale" : "1x"
     },
     {
+      "filename" : "PHOTO-2025-08-07-20-57-50 1.jpg",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
+      "filename" : "PHOTO-2025-08-07-20-57-50 2.jpg",
       "idiom" : "universal",
       "scale" : "3x"
     }

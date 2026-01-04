@@ -248,59 +248,24 @@ class OfflineManager: ObservableObject {
             // Convert offline donation to API request format
             let request = convertToOnlineRequest(donation)
             
-            // REAL API CALL - Backend will send email automatically
-            let data = try await QuickDonationApi.shared.submitQuickDonation(request)
+            // ✅ NEW: Use mobile-specific endpoint that returns JSON
+            let mobileResponse = try await QuickDonationApi.shared.submitQuickDonationMobile(request)
             
-            // Enhanced response logging
-            print("📦 Response size: \(data.count) bytes")
-            
-            if data.isEmpty {
-                print("⚠️ Response is empty")
-            } else if let jsonString = String(data: data, encoding: .utf8) {
-                print("📄 Raw JSON response: \(jsonString)")
-            } else {
-                print("⚠️ Response is not valid UTF-8")
-                print("📄 Raw data: \(data.base64EncodedString())")
-            }
-            
-            // Try to parse response to get server IDs
-            if !data.isEmpty {
-                do {
-                    let decoder = JSONDecoder()
-                    decoder.dateDecodingStrategy = .iso8601
-                    let response = try decoder.decode(QuickDonationResponse.self, from: data)
-                    
-                    // Success with response data
-                    await MainActor.run {
-                        donation.syncStatus = "synced"
-                        donation.serverDonationId = response.donorReceiptDetailId
-                        donation.errorMessage = nil
-                        PersistenceController.shared.save()
-                        print("✅ Synced: \(donation.receiptNumber) → Server ID: \(response.donorReceiptDetailId)")
-                        print("   Donor: \(response.donorFullName)")
-                        print("   Amount: $\(response.donationAmt)")
-                        print("📧 Backend automatically sent email receipt")
-                    }
-                } catch DecodingError.keyNotFound(let key, let context) {
-                    print("⚠️ Missing key '\(key.stringValue)' in response")
-                    print("   Context: \(context.debugDescription)")
-                    print("   Coding path: \(context.codingPath)")
-                    await markAsSyncedWithoutId(donation)
-                } catch DecodingError.typeMismatch(let type, let context) {
-                    print("⚠️ Type mismatch for \(type)")
-                    print("   Context: \(context.debugDescription)")
-                    await markAsSyncedWithoutId(donation)
-                } catch DecodingError.valueNotFound(let type, let context) {
-                    print("⚠️ Value not found for \(type)")
-                    print("   Context: \(context.debugDescription)")
-                    await markAsSyncedWithoutId(donation)
-                } catch {
-                    print("⚠️ Response parsing failed: \(error.localizedDescription)")
-                    await markAsSyncedWithoutId(donation)
+            // ✅ Success with mobile response data
+            await MainActor.run {
+                donation.syncStatus = "synced"
+                donation.serverDonationId = mobileResponse.donorReceiptDetailId
+                donation.errorMessage = nil
+                PersistenceController.shared.save()
+                
+                print("✅ Synced: \(donation.receiptNumber) → Server ID: \(mobileResponse.donorReceiptDetailId)")
+                print("   Donor: \(mobileResponse.donorFullName)")
+                print("   Amount: $\(mobileResponse.donationAmt)")
+                print("   Receipt Number: \(mobileResponse.receiptNumber)")
+                print("   PDF URL: \(mobileResponse.receiptPdfUrl)")
+                if mobileResponse.emailSent {
+                    print("   📧 Email sent to donor")
                 }
-            } else {
-                // Empty response but 200 status
-                await markAsSyncedWithoutId(donation)
             }
             
         } catch {
@@ -320,20 +285,6 @@ class OfflineManager: ObservableObject {
             }
         }
     }
-
-    // Helper function to mark as synced without server ID
-    private func markAsSyncedWithoutId(_ donation: OfflineDonation) async {
-        await MainActor.run {
-            donation.syncStatus = "synced"
-            donation.serverDonationId = 0
-            donation.errorMessage = nil
-            PersistenceController.shared.save()
-            print("✅ Synced: \(donation.receiptNumber) (ID unavailable but sync successful)")
-            print("📧 Backend automatically sent email receipt")
-        }
-    }
-
-    
     // MARK: - Convert Offline Donation to API Request (FIXED)
     
     private func convertToOnlineRequest(_ offline: OfflineDonation) -> QuickDonorAndDonationRequest {

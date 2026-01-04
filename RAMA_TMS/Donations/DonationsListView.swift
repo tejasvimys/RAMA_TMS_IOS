@@ -3,7 +3,7 @@
 // RAMA_TMS
 //
 // Created by Tejasvi Mahesh on 12/21/25.
-// Updated with Offline Donations Support
+// Updated with Offline Donations Support & Detail Navigation
 //
 
 import SwiftUI
@@ -96,11 +96,13 @@ struct DonationsListView: View {
                         .font(.caption)
                 }
                 
-                // Offline Donations Section
+                // Offline Donations Section (✅ WITH NAVIGATION)
                 if !filteredOfflineDonations.isEmpty {
                     Section {
                         ForEach(filteredOfflineDonations, id: \.id) { donation in
-                            OfflineDonationRow(donation: donation)
+                            NavigationLink(destination: DonationDetailView(donation: donation)) {
+                                OfflineDonationRow(donation: donation)
+                            }
                         }
                     } header: {
                         if selectedFilter == .all {
@@ -109,11 +111,14 @@ struct DonationsListView: View {
                     }
                 }
                 
-                // Online Donations Section
+                // Online Donations Section (✅ WITH NAVIGATION - if you want details for online too)
                 if !filteredOnlineDonations.isEmpty {
                     Section {
                         ForEach(filteredOnlineDonations) { item in
                             OnlineDonationRow(item: item)
+                            // Note: Online donations don't have OfflineDonation objects
+                            // so they can't use DonationDetailView yet
+                            // You can add a separate detail view for online donations if needed
                         }
                     } header: {
                         if selectedFilter == .all {

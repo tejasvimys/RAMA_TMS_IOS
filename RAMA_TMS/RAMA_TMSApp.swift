@@ -18,12 +18,6 @@ struct RamaApp: App {
     @State private var route: AppRoute = .splash
     
     init() {
-        // TEMPORARY: Clear saved session for testing
-        // Uncomment if you want to clear session on app launch
-//        UserDefaults.standard.removeObject(forKey: "appToken")
-//        UserDefaults.standard.removeObject(forKey: "userEmail")
-//        UserDefaults.standard.removeObject(forKey: "userName")
-//        UserDefaults.standard.removeObject(forKey: "userRole")
         
         let _ = PersistenceController.shared
         print("✅ Core Data initialized")
